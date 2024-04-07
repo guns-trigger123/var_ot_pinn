@@ -1,5 +1,7 @@
 import os
+import sys
 import torch
+import collections
 import numpy as np
 import torch.optim as optim
 import matplotlib.pyplot as plt
@@ -85,13 +87,13 @@ def h_delta(input: torch.Tensor, delta):
 def train_kr_net(model, criterion, optimizer, step_schedule, distribution,
                  S_domain, out_res_domain, p_before, beta, iterations, epoch):
     input_temp = S_domain.clone().detach()
-    x0 = input_temp[:, 0:1].requires_grad_()
-    x1 = input_temp[:, 1:2].requires_grad_()
+    # x0 = input_temp[:, 0:1].requires_grad_()
+    # x1 = input_temp[:, 1:2].requires_grad_()
+    x0 = input_temp[5000:, 0:1].requires_grad_()
+    x1 = input_temp[5000:, 1:2].requires_grad_()
     input = torch.cat([x0, x1], dim=1)
     for iter in range(iterations):
-        # y, pdj, sldj = model(input, reverse=False)
-        y, pdj, sldj = model(input[5000:,:], reverse=False)
-        # with torch.no_grad():
+        y, pdj, sldj = model(input, reverse=False)
         p = distribution.prob(y) * pdj
         log_p = distribution.log_prob(y) + sldj
 
@@ -101,29 +103,35 @@ def train_kr_net(model, criterion, optimizer, step_schedule, distribution,
         # dp_dx1 = torch.autograd.grad(p, x1, grad_outputs=torch.ones_like(p, device=p.device),
         #                              create_graph=True)[0]
         # dp_norm2 = dp_dx0 ** 2 + dp_dx1 ** 2
-        # residual = beta * dp_norm2 / (p_before+1e6) - (out_res_domain ** 2) * p / (p_before+1e6)
-        # residual = beta * dp_norm2.sqrt() / (p_before+1e6) - (out_res_domain.abs()) * p / (p_before+1e6)
-        # loss = criterion(residual, torch.zeros_like(residual, device=residual.device))
+        # # residual = - beta * dp_norm2 / (p_before+1e-6) + (out_res_domain ** 2) * p / (p_before+1e-6)
+        # residual = - beta * dp_norm2 / (p_before[5000:,:]+1e-6) + (out_res_domain[5000:,:] ** 2) * p / (p_before[5000:,:]+1e-6)
+        # loss = (-residual).mean()
 
         # das loss function
         # h_d = h_delta(input, 0.005)
         # out_res_domain = out_res_domain * h_d
-        # loss = - (out_res_domain ** 2) / p * log_p
-        # loss = loss.mean()
+        with torch.no_grad():
+            p = distribution.prob(y) * pdj
+            if not torch.all(p > 0):
+                sys.exit("Error: p is not all postive.")
+        # loss = - log_p * (out_res_domain ** 2) / (p+1e-6)
+        loss = - log_p * (out_res_domain[5000:, :] ** 2) / (p + 1e-6)
+        loss = loss.mean()
 
         # weighted likelihood  loss function
-        # out_res_domain_sum = out_res_domain.abs().sum()
-        # loss0 = - log_p * out_res_domain.abs() / out_res_domain_sum
-        # loss0 = - log_p * out_res_domain.abs()
-        loss0 = - log_p * out_res_domain.abs()[5000:,:]
-        loss = loss0.mean()
+        # loss0 = - log_p * (out_res_domain**2)
+        # loss0 = - log_p * out_res_domain[5000:,:]**2
+        # loss = loss0.mean()
 
         loss.backward()
         optimizer.step()
         step_schedule.step()
         model.zero_grad()
 
-        if (iter + 1) % 500 == 0:
+        if (iter + 1) % 100 == 0:
+            print(f"kr net epoch: {epoch} iter: {iter} " + f"loss: {loss}")
+
+        if (iter + 1) % 1500 == 0:
             print(f"kr net epoch: {epoch} iter: {iter} " + f"loss: {loss}")
             save_path = os.path.join('./saved_models/', f'kr_net_{epoch}_{iter + 1}.pt')
             torch.save(model.state_dict(), save_path)
@@ -151,7 +159,7 @@ if __name__ == '__main__':
     criterion = torch.nn.MSELoss()
 
     opt_pinn = optim.Adam(pinn_model.parameters(), lr=0.0001)
-    opt_kr_net = optim.Adam(kr_net_model.parameters(), lr=0.001)
+    opt_kr_net = optim.Adam(kr_net_model.parameters(), lr=0.0001)
 
     step_schedule_pinn = optim.lr_scheduler.StepLR(step_size=10000, gamma=0.95, optimizer=opt_pinn)
     step_schedule_kr_net = optim.lr_scheduler.StepLR(step_size=10000, gamma=0.95, optimizer=opt_kr_net)
@@ -161,10 +169,10 @@ if __name__ == '__main__':
     # init sampling
     NUM_BOUNDARY = 8000
     NUM_DOMAIN = 10000
-    x = (torch.rand(size=(NUM_DOMAIN, 1)) * 1.9 - 0.95).to(device).requires_grad_()
-    y = (torch.rand(size=(NUM_DOMAIN, 1)) * 1.9 - 0.95).to(device).requires_grad_()
-    # x = (torch.rand(size=(NUM_DOMAIN, 1)) * 2 - 1).to(device).requires_grad_()
-    # y = (torch.rand(size=(NUM_DOMAIN, 1)) * 2 - 1).to(device).requires_grad_()
+    # x = (torch.rand(size=(NUM_DOMAIN, 1)) * 1.9 - 0.95).to(device).requires_grad_()
+    # y = (torch.rand(size=(NUM_DOMAIN, 1)) * 1.9 - 0.95).to(device).requires_grad_()
+    x = (torch.rand(size=(NUM_DOMAIN, 1)) * 2 - 1).to(device).requires_grad_()
+    y = (torch.rand(size=(NUM_DOMAIN, 1)) * 2 - 1).to(device).requires_grad_()
     S_domain = torch.cat([x, y], dim=1)
     S_boundary = torch.cat([torch.cat([torch.ones(NUM_BOUNDARY, 1), torch.rand(NUM_BOUNDARY, 1) * 2 - 1], 1),
                             torch.cat([-torch.ones(NUM_BOUNDARY, 1), torch.rand(NUM_BOUNDARY, 1) * 2 - 1], 1),
@@ -177,6 +185,7 @@ if __name__ == '__main__':
         # train pinn model
         out_res_domain = train_pinn(pinn_model, criterion, opt_pinn, step_schedule_pinn,
                                     x, y, S_domain, S_boundary, 1500, epoch)
+        opt_pinn.state = collections.defaultdict(dict)
 
         with torch.no_grad():
             if epoch == 0:
@@ -193,11 +202,13 @@ if __name__ == '__main__':
         # train kr_net model
         if epoch < EPOCHS - 1:
             train_kr_net(kr_net_model, criterion, opt_kr_net, step_schedule_kr_net, reference_distribution,
-                         S_domain, out_res_domain, p_before, 5, 500, epoch)
+                         S_domain, out_res_domain, p_before, 5, 1500, epoch)
+            opt_kr_net.state = collections.defaultdict(dict)
 
         # resample
         # kr_net sample
-        z = reference_distribution.sample((NUM_DOMAIN / 2, 2)).cuda()
+        # z = reference_distribution.sample((NUM_DOMAIN / 2, 2)).cuda()
+        z = reference_distribution.sample((NUM_DOMAIN, 2)).cuda()
         S_domain_kr, _, _ = kr_net_model(z, reverse=True)
         S_domain_kr = S_domain_kr.detach()
 
@@ -207,14 +218,14 @@ if __name__ == '__main__':
         plt.show()
 
         # uniform sample
-        S_domain_uniform = (torch.rand(size=(NUM_DOMAIN / 2, 2)) * 1.9 - 0.95).cuda()
-        # S_domain_uniform = (torch.rand(size=(NUM_DOMAIN / 2, 2)) * 2 - 1).cuda()
+        # S_domain_uniform = (torch.rand(size=(NUM_DOMAIN / 2, 2)) * 1.9 - 0.95).cuda()
+        S_domain_uniform = (torch.rand(size=(NUM_DOMAIN / 2, 2)) * 2 - 1).cuda()
 
         x = torch.cat([S_domain_kr[:, 0:1], S_domain_uniform[:, 0:1]], dim=0).requires_grad_()
         y = torch.cat([S_domain_kr[:, 1:2], S_domain_uniform[:, 1:2]], dim=0).requires_grad_()
-
         # x = S_domain_kr[:, 0:1].requires_grad_()
         # y = S_domain_kr[:, 1:2].requires_grad_()
+
         S_domain = torch.cat([x, y], dim=1)
         S_boundary = torch.cat([torch.cat([torch.ones(NUM_BOUNDARY, 1), torch.rand(NUM_BOUNDARY, 1) * 2 - 1], 1),
                                 torch.cat([-torch.ones(NUM_BOUNDARY, 1), torch.rand(NUM_BOUNDARY, 1) * 2 - 1], 1),
