@@ -40,7 +40,7 @@ class _AffineLinearMapping(nn.Module):
             x = x / (self.hb - self.lb)
             x = x - self.lb / (self.hb - self.lb)
             pdj = pdj * 1.0 / ((self.hb - self.lb) ** self.input_dim)
-            sldj = sldj + (1.0 / math.log(self.hb - self.lb)) * self.input_dim
+            sldj = sldj + (-math.log(self.hb - self.lb)) * self.input_dim
 
         return x, pdj, sldj
 
