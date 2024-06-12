@@ -4,15 +4,19 @@ Inspired by DAS-PINNs [1], we try another generative model instead of KR net [2]
 
 It seems that KR net (maybe most of flow-based models) does not work perfectly well when the support set of the probability distribution to be learned is too complex (i.e. the support set is not simply connected).
 
+# Implementation
+
+We create a pytorch version of KR net. And we try the problem with 2 peaks in DAS-PINNs [1] using both KR net and AE-OT generative model.
+
 # Requirements
 
 pytorch >= 2.1 ( previous versions may work as well )
 
 # Codes reference
 
-[1]  DAS-PINNs: https://github.com/MJfadeaway/DAS
+DAS-PINNs: https://github.com/MJfadeaway/DAS
 
-[2] AE-OT: https://github.com/k2cu8/pyOMT
+AE-OT: https://github.com/k2cu8/pyOMT
 
 # Reference
 
