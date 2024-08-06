@@ -1,88 +1,64 @@
 import torch
-
-
-def gradients(u, x, order=1):
-    if order == 1:
-        temp = torch.autograd.grad(u, x, torch.ones_like(u, device=u.device),
-                                   create_graph=True, materialize_grads=True)[0]
-        return temp.requires_grad_()
-    else:
-        return gradients(gradients(u, x), x, order=order - 1)
+from torch.autograd import grad
 
 
 def logabs(x: torch.Tensor):
     return torch.log(torch.abs(x))
 
 
-if __name__ == '__main__':
-    def exp_reducer(x):
-        return (x ** 2).sum(dim=1, keepdims=True)
+def hessian(y, x):
+    ''' hessian of y wrt x
+    y: shape (meta_batch_size, num_observations, channels)
+    x: shape (meta_batch_size, num_observations, 2)
+    '''
+    meta_batch_size, num_observations = y.shape[:2]
+    grad_y = torch.ones_like(y[..., 0]).to(y.device)
+    h = torch.zeros(meta_batch_size, num_observations, y.shape[-1], x.shape[-1], x.shape[-1]).to(y.device)
+    for i in range(y.shape[-1]):
+        # calculate dydx over batches for each feature value of y
+        dydx = grad(y[..., i], x, grad_y, create_graph=True)[0]
+
+        # calculate hessian on y for each x value
+        for j in range(x.shape[-1]):
+            h[..., i, j, :] = grad(dydx[..., j], x, grad_y, create_graph=True)[0][..., :]
+
+    status = 0
+    if torch.any(torch.isnan(h)):
+        status = -1
+    return h, status
 
 
-    x = torch.arange(0, 6, dtype=torch.float32, requires_grad=True).reshape(3, 2)
-    print("x", x)
-
-    # y = torch.autograd.functional.jacobian(exp_reducer, x, create_graph=True)
-    # print("y", y)
-
-    if False:
-        v = torch.ones([x.shape[0], 1])
-        y_vjp0, y_vjp1 = torch.autograd.functional.vjp(exp_reducer, x, v, create_graph=True)
-        print("y_vjp0", y_vjp0)
-        print("y_vjp1", y_vjp1)
-
-        z = y_vjp1.sum(-1, keepdims=True)
-        print("z", z)
-
-        criterion = torch.nn.MSELoss()
-        loss = criterion(z, torch.zeros_like(z))
-        print(loss)
-
-        loss.backward()
-
-    if True:
-        y = exp_reducer(x)
-        print("y", y)
-
-        # dy_dx = torch.autograd.grad((y,), (x,), (torch.ones_like(y),),
-        #                             create_graph=True)[0].requires_grad_()
-        # print('dy_dx', dy_dx)
-        # d2y_dx2 = torch.autograd.grad((dy_dx,), (x,), (torch.ones_like(dy_dx),),
-        #                               create_graph=True)[0].requires_grad_()
-        # print('d2y_dx2', d2y_dx2)
-        # d3y_dx3 = torch.autograd.grad((d2y_dx2,), (x,), (torch.ones_like(d2y_dx2),),
-        #                               create_graph=True)[0].requires_grad_()
-        # print('d3y_dx3', d3y_dx3)
-        # d4y_dx4 = torch.autograd.grad((d3y_dx3,), (x,), (torch.ones_like(d3y_dx3),),
-        #                               create_graph=True)[0].requires_grad_()
-        # print('d4y_dx4', d4y_dx4)
-
-        dny_dxn = gradients(y, x, 5)
-        print('dny_dxn', dny_dxn)
-
-        z = dny_dxn.sum(-1, keepdims=True)
-        print("z", z)
-
-        criterion = torch.nn.MSELoss()
-        loss = criterion(z, torch.zeros_like(z))
-        print(loss)
-
-        loss.backward()
-        pass
-
-    if False:
-        def my_function(x, y):
-            # x 并未直接影响最终结果
-            z = y * 3
-            w = z + 2
-            return w
+def laplace(y, x):
+    grad = gradient(y, x)
+    return divergence(grad, x)
 
 
-        x = torch.tensor([3.0], requires_grad=True)
-        y = torch.tensor([5.0], requires_grad=True)
+def divergence(y, x):
+    div = 0.
+    for i in range(y.shape[-1]):
+        div += grad(y[..., i], x, torch.ones_like(y[..., i]), create_graph=True)[0][..., i:i + 1]
+    return div
 
-        result = my_function(x, y)
 
-        # 计算关于 w 对 x 的梯度，但 x 对于最终结果并没有直接的影响
-        grads = torch.autograd.grad(result, x, materialize_grads=True)
-        print(grads[0])  # 输出 tensor([0.])
+def gradient(y, x, grad_outputs=None):
+    if grad_outputs is None:
+        grad_outputs = torch.ones_like(y)
+    grad = torch.autograd.grad(y, [x], grad_outputs=grad_outputs, create_graph=True)[0]
+    return grad
+
+
+def jacobian(y, x):
+    ''' jacobian of y wrt x '''
+    meta_batch_size, num_observations = y.shape[:2]
+    jac = torch.zeros(meta_batch_size, num_observations, y.shape[-1], x.shape[-1]).to(
+        y.device)  # (meta_batch_size*num_points, 2, 2)
+    for i in range(y.shape[-1]):
+        # calculate dydx over batches for each feature value of y
+        y_flat = y[..., i].view(-1, 1)
+        jac[:, :, i, :] = grad(y_flat, x, torch.ones_like(y_flat), create_graph=True)[0]
+
+    status = 0
+    if torch.any(torch.isnan(jac)):
+        status = -1
+
+    return jac, status
