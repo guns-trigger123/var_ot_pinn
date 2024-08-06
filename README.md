@@ -25,13 +25,3 @@ AE-OT: https://github.com/k2cu8/pyOMT
 [2] Tang K, Wan X, Liao Q. Adaptive deep density approximation for Fokker-Planck equations[J]. Journal of Computational Physics, 2022, 457: 111080.
 
 [3] An D, Guo Y, Lei N, et al. AE-OT: A new generative model based on extended semi-discrete optimal transport[J]. ICLR 2020, 2019.
-
-# Results of test problems in DAS-PINNs [1]
-
-samples using generative model in AE-OT (green)
-
-![samples using model in AE-OT](https://github.com/guns-trigger123/var_ot_pinn/blob/master/plots/var_1000_2/samples_48.png)
-
-error
-
-![error](https://github.com/guns-trigger123/var_ot_pinn/blob/master/plots/var_1000_2/49_1500.png)
