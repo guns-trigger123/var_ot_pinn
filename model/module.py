@@ -18,7 +18,8 @@ class LinearModule(nn.Module):
         acti = {
             "tanh": nn.Tanh(),
             "relu": nn.ReLU(),
-            "leaky relu": nn.LeakyReLU(args)
+            "leaky relu": nn.LeakyReLU(args),
+            "sin": Sine()
         }
         assert activation_name in acti.keys(), f"{[act for act in acti.keys()]} are used while input is {activation_name}"
 
@@ -59,17 +60,29 @@ class ResModule(nn.Module):
         return y
 
 
-class LogisticDistribution(Distribution):
-    def __init__(self):
+class Sine(nn.Module):
+    def __init(self):
         super().__init__()
 
-    def log_prob(self, x):
-        return -(F.softplus(x) + F.softplus(-x))
+    def forward(self, input):
+        return torch.sin(30 * input)
 
-    def sample(self, size):
-        if cfg['USE_CUDA']:
-            z = Uniform(torch.cuda.FloatTensor([0.]), torch.cuda.FloatTensor([1.])).sample(size)
+
+class WeightedMSELoss(nn.Module):
+    def __init__(self, reduction='mean'):
+        super(WeightedMSELoss, self).__init__()
+        self.reduction = reduction
+
+    def forward(self, input, target, weight):
+        # 计算加权的平方误差
+        loss = weight * (input - target) ** 2
+
+        # 根据reduction参数选择返回的值
+        if self.reduction == 'none':
+            return loss
+        elif self.reduction == 'sum':
+            return loss.sum()
+        elif self.reduction == 'mean':
+            return loss.mean()
         else:
-            z = Uniform(torch.FloatTensor([0.]), torch.FloatTensor([1.])).sample(size)
-
-        return torch.log(z) - torch.log(1. - z)
+            raise ValueError(f"Invalid reduction mode: {self.reduction}")
