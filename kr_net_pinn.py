@@ -10,118 +10,91 @@ from utils.utils import *
 from model.pinn.pinn_net import PINN_FCN
 from model.kr_net.kr_net import KR_net
 from model.kr_net.my_distribution import NormalDistribution
-
-SP = 1000.0
-
-
-# one peak
-def real_solution(input: torch.Tensor):
-    return (-SP * (input ** 2).sum(-1, keepdims=True)).exp()
+from BVPs.Possion import TwoPeakPossion
+from model.module import WeightedMSELoss
 
 
-def s(input: torch.Tensor):
-    return (4 * SP - 4 * SP ** 2 * (input ** 2).sum(-1, keepdims=True)) * (
-            -SP * (input ** 2).sum(-1, keepdims=True)).exp()
+def train_pinn(model, criterion, optimizer, step_schedule, bvp,
+               loss_history, S_domain, S_boundary, p_before, iterations, epoch):
+    p_before_inv = 1.0 / (p_before + 1e-6)
+    sum_p_before_inv = torch.sum(p_before_inv)
+    len = p_before.shape[0]
+    w = len * p_before_inv / sum_p_before_inv
 
-
-# two peak possion
-# def real_solution(input: torch.Tensor):
-#     return ((-SP * ((input - 0.5) ** 2).sum(-1, keepdims=True)).exp()
-#             + (-SP * ((input + 0.5) ** 2).sum(-1, keepdims=True)).exp())
-#
-#
-# def s(input: torch.Tensor):
-#     return (4 * SP - 4 * SP ** 2 * ((input - 0.5) ** 2).sum(-1, keepdims=True)) * (
-#             -SP * ((input - 0.5) ** 2).sum(-1, keepdims=True)).exp() + (
-#             4 * SP - 4 * SP ** 2 * ((input + 0.5) ** 2).sum(-1, keepdims=True)) * (
-#             -SP * ((input + 0.5) ** 2).sum(-1, keepdims=True)).exp()
-
-
-def train_pinn(model, criterion, optimizer, step_schedule,
-               x, y, S_domain, S_boundary, iterations, epoch):
     for iter in range(iterations):
         u = model(S_domain)
-        dy_dx = torch.autograd.grad(u, x, grad_outputs=torch.ones_like(u, device=u.device),
-                                    create_graph=True)[0]
-        dy_dy = torch.autograd.grad(u, y, grad_outputs=torch.ones_like(u, device=u.device),
-                                    create_graph=True)[0]
-        dy_dxx = torch.autograd.grad(dy_dx, x, grad_outputs=torch.ones_like(dy_dx, device=dy_dx.device),
-                                     create_graph=True)[0]
-        dy_dyy = torch.autograd.grad(dy_dy, y, grad_outputs=torch.ones_like(dy_dy, device=dy_dy.device),
-                                     create_graph=True)[0]
-        res_domain = -dy_dxx - dy_dyy - s(S_domain).detach()
-        res_boundary = model(S_boundary) - real_solution(S_boundary).detach()
+        res_domain = -laplace(u, S_domain) - bvp.s(S_domain).detach()
+        res_boundary = model(S_boundary) - bvp.real_solution(S_boundary).detach()
         if (iter + 1) == iterations:
             out_res_domain = res_domain.clone().detach()
 
-        loss_domain = criterion(res_domain, torch.zeros_like(res_domain, device=res_domain.device))
-        loss_boundary = criterion(res_boundary, torch.zeros_like(res_boundary, device=res_boundary.device))
-        loss = loss_domain + 5.0 * loss_boundary
+        # aas
+        loss_domain = criterion(res_domain, torch.zeros_like(res_domain, device=res_domain.device), 1)
+        # das
+        # loss_domain = criterion(res_domain, torch.zeros_like(res_domain, device=res_domain.device), w)
 
-        loss.backward()
+        loss_boundary = criterion(res_boundary, torch.zeros_like(res_boundary, device=res_boundary.device), 1)
+        loss = loss_domain + 100.0 * loss_boundary
+
+        with torch.autograd.detect_anomaly():
+            loss.backward()
+        # loss.backward()
         optimizer.step()
         step_schedule.step()
         model.zero_grad()
         S_domain.grad = None
         S_boundary.grad = None
 
-        if (iter + 1) % 1500 == 0:
+        if (iter + 1) % 100 == 0:
+            loss_history["domain"].append(loss_domain)
+            loss_history["boundary"].append(loss_boundary)
+            loss_history["total"].append(loss)
+
+        if (iter + 1) % iterations == 0:
             print(f"pinn epoch: {epoch} iter: {iter} " +
                   f"loss: {loss} loss_domain: {loss_domain} loss_boundary: {loss_boundary}")
+
+        if (iter + 1) % iterations == 0:
             save_path = os.path.join('./saved_models/', f'pinn_{epoch}_{iter + 1}.pt')
             torch.save(model.state_dict(), save_path)
 
     return out_res_domain
 
 
-def h_delta(input: torch.Tensor, delta):
-    with torch.no_grad():
-        cutoff = torch.ones_like(input, dtype=input.dtype, device=input.device)
-        zeros = torch.zeros_like(input, dtype=input.dtype, device=input.device)
-        cutoff = torch.where((input < 0) & (input > -2 * delta), input / (2 * delta) + 1, cutoff)
-        cutoff = torch.where((input > 1) & (input < 1 + 2 * delta), -input / (2 * delta) + 1, cutoff)
-        cutoff = torch.where((input < -2 * delta) | (input > 1 + 2 * delta), zeros, cutoff)
-        return cutoff.prod(-1)
-
-
 def train_kr_net(model, criterion, optimizer, step_schedule, distribution,
-                 S_domain, out_res_domain, p_before, beta, iterations, epoch):
-    input_temp = S_domain.clone().detach()
-    # x0 = input_temp[:, 0:1].requires_grad_()
-    # x1 = input_temp[:, 1:2].requires_grad_()
-    x0 = input_temp[5000:, 0:1].requires_grad_()
-    x1 = input_temp[5000:, 1:2].requires_grad_()
-    input = torch.cat([x0, x1], dim=1)
+                 loss_history, S_domain, out_res_domain, p_before, beta, iterations, epoch):
+    def h_delta(input: torch.Tensor, delta):
+        # for the out_res_domain correction
+        with torch.no_grad():
+            cutoff = torch.ones_like(input, dtype=input.dtype, device=input.device)
+            zeros = torch.zeros_like(input, dtype=input.dtype, device=input.device)
+            cutoff = torch.where((input < -1) & (input > -1 - 2 * delta), (input + 1) / (2 * delta) + 1, cutoff)
+            cutoff = torch.where((input > 1) & (input < 1 + 2 * delta), -(input - 1) / (2 * delta) + 1, cutoff)
+            cutoff = torch.where((input < -1 - 2 * delta) | (input > 1 + 2 * delta), zeros, cutoff)
+            return cutoff.prod(-1)
+
+    h_d = h_delta(S_domain, 0.005)
+    out_res_domain = out_res_domain * h_d
+
+    p_before_inv = 1.0 / (p_before + 1e-6)
+    sum_p_before_inv = torch.sum(p_before_inv)
+    len = p_before.shape[0]
+    w = len * p_before_inv / sum_p_before_inv
+
     for iter in range(iterations):
-        y, pdj, sldj = model(input, reverse=False)
+        y, pdj, sldj = model(S_domain, reverse=False)
         p = distribution.prob(y) * pdj
         log_p = distribution.log_prob(y) + sldj
 
         # aas loss function
-        # dp_dx0 = torch.autograd.grad(p, x0, grad_outputs=torch.ones_like(p, device=p.device),
-        #                              create_graph=True)[0]
-        # dp_dx1 = torch.autograd.grad(p, x1, grad_outputs=torch.ones_like(p, device=p.device),
-        #                              create_graph=True)[0]
-        # dp_norm2 = dp_dx0 ** 2 + dp_dx1 ** 2
-        # # residual = - beta * dp_norm2 / (p_before+1e-6) + (out_res_domain ** 2) * p / (p_before+1e-6)
-        # residual = - beta * dp_norm2 / (p_before[5000:,:]+1e-6) + (out_res_domain[5000:,:] ** 2) * p / (p_before[5000:,:]+1e-6)
-        # loss = (-residual).mean()
-
+        grad_p_norm = (gradient(p, S_domain) ** 2).sum(dim=1, keepdims=True)
+        loss = - p * (out_res_domain ** 2) * w + beta * grad_p_norm * w
         # das loss function
-        # h_d = h_delta(input, 0.005)
-        # out_res_domain = out_res_domain * h_d
-        with torch.no_grad():
-            p = distribution.prob(y) * pdj
-            if not torch.all(p > 0):
-                sys.exit("Error: p is not all postive.")
-        # loss = - log_p * (out_res_domain ** 2) / (p+1e-6)
-        loss = - log_p * (out_res_domain[5000:, :] ** 2) / (p + 1e-6)
+        # loss = - log_p * (out_res_domain ** 2) * w
+        # aas + das loss function
+        # grad_p_norm = (gradient(p, S_domain) ** 2).sum(dim=1, keepdims=True)
+        # loss = - log_p * (out_res_domain ** 2) * w + beta * grad_p_norm * w
         loss = loss.mean()
-
-        # weighted likelihood  loss function
-        # loss0 = - log_p * (out_res_domain**2)
-        # loss0 = - log_p * out_res_domain[5000:,:]**2
-        # loss = loss0.mean()
 
         loss.backward()
         optimizer.step()
@@ -129,18 +102,19 @@ def train_kr_net(model, criterion, optimizer, step_schedule, distribution,
         model.zero_grad()
 
         if (iter + 1) % 100 == 0:
-            print(f"kr net epoch: {epoch} iter: {iter} " + f"loss: {loss}")
+            loss_history["total"].append(loss)
 
-        if (iter + 1) % 1500 == 0:
-            print(f"kr net epoch: {epoch} iter: {iter} " + f"loss: {loss}")
+        if (iter + 1) % 100 == 0:
+            print(f"kr net epoch: {epoch} iter: {iter} loss:{loss}")
+
+        if (iter + 1) % iterations == 0:
             save_path = os.path.join('./saved_models/', f'kr_net_{epoch}_{iter + 1}.pt')
             torch.save(model.state_dict(), save_path)
 
 
 if __name__ == '__main__':
-
     # init model
-    pinn_model = PINN_FCN(2, 1)
+    pinn_model = PINN_FCN(2, 1, "sin")
     kr_net_model = KR_net()
 
     # use cuda or cpu
@@ -153,40 +127,33 @@ if __name__ == '__main__':
         device = torch.device('cpu')
 
     # init training preparation
-    pinn_model.train()
-    kr_net_model.train()
-
-    criterion = torch.nn.MSELoss()
-
+    criterion_pinn = WeightedMSELoss()
+    criterion_kr_net = None
     opt_pinn = optim.Adam(pinn_model.parameters(), lr=0.0001)
-    opt_kr_net = optim.Adam(kr_net_model.parameters(), lr=0.0001)
-
+    opt_kr_net = optim.Adam(kr_net_model.parameters(), lr=0.0008)
     step_schedule_pinn = optim.lr_scheduler.StepLR(step_size=10000, gamma=0.95, optimizer=opt_pinn)
     step_schedule_kr_net = optim.lr_scheduler.StepLR(step_size=10000, gamma=0.95, optimizer=opt_kr_net)
-
     reference_distribution = NormalDistribution()
 
     # init sampling
-    NUM_BOUNDARY = 8000
-    NUM_DOMAIN = 10000
-    # x = (torch.rand(size=(NUM_DOMAIN, 1)) * 1.9 - 0.95).to(device).requires_grad_()
-    # y = (torch.rand(size=(NUM_DOMAIN, 1)) * 1.9 - 0.95).to(device).requires_grad_()
-    x = (torch.rand(size=(NUM_DOMAIN, 1)) * 2 - 1).to(device).requires_grad_()
-    y = (torch.rand(size=(NUM_DOMAIN, 1)) * 2 - 1).to(device).requires_grad_()
-    S_domain = torch.cat([x, y], dim=1)
+    NUM_DOMAIN = 5000
+    NUM_BOUNDARY = NUM_DOMAIN // 4
+    S_domain = (torch.rand(size=(NUM_DOMAIN, 2)) * 2 - 1).to(device).requires_grad_()
     S_boundary = torch.cat([torch.cat([torch.ones(NUM_BOUNDARY, 1), torch.rand(NUM_BOUNDARY, 1) * 2 - 1], 1),
                             torch.cat([-torch.ones(NUM_BOUNDARY, 1), torch.rand(NUM_BOUNDARY, 1) * 2 - 1], 1),
                             torch.cat([torch.rand(NUM_BOUNDARY, 1) * 2 - 1, torch.ones(NUM_BOUNDARY, 1)], 1),
                             torch.cat([torch.rand(NUM_BOUNDARY, 1) * 2 - 1, -torch.ones(NUM_BOUNDARY, 1)], 1)])
     S_boundary = S_boundary.to(device)
 
+    # init BVP
+    two_peak_possion = TwoPeakPossion()
+
+    # loss track
+    loss_pinn = {"domain": [], "boundary": [], "total": []}
+    loss_kr_net = {"total": []}
+
     EPOCHS = 50
     for epoch in range(EPOCHS):
-        # train pinn model
-        out_res_domain = train_pinn(pinn_model, criterion, opt_pinn, step_schedule_pinn,
-                                    x, y, S_domain, S_boundary, 1500, epoch)
-        opt_pinn.state = collections.defaultdict(dict)
-
         with torch.no_grad():
             if epoch == 0:
                 p_before = torch.ones([S_domain.shape[0], 1], device=S_domain.device) / 4.0
@@ -195,40 +162,65 @@ if __name__ == '__main__':
                 p_before = reference_distribution.prob(y_before) * pdj_before
                 p_before = p_before.detach()
 
-        # kr_net_model = KR_net().to(device)
-        # opt_kr_net = optim.Adam(kr_net_model.parameters(), lr=0.0005)
-        # step_schedule_kr_net = optim.lr_scheduler.StepLR(step_size=1000, gamma=0.9, optimizer=opt_kr_net)
+        # train pinn model
+        pinn_model.train()
+        out_res_domain = train_pinn(pinn_model, criterion_pinn, opt_pinn, step_schedule_pinn, two_peak_possion,
+                                    loss_pinn, S_domain, S_boundary, p_before, 500, epoch)
+        # opt_pinn.state = collections.defaultdict(dict)
+
+        # uni samples for kr net training
+        pinn_model.eval()
+        S_domain = (torch.rand(size=(NUM_DOMAIN, 2)) * 2 - 1).to(device).requires_grad_()
+        p_before = torch.ones([S_domain.shape[0], 1], device=S_domain.device) / 4.0
+        u = pinn_model(S_domain)
+        res_domain = -laplace(u, S_domain) - two_peak_possion.s(S_domain).detach()
+        out_res_domain = res_domain.clone().detach()
+        pinn_model.zero_grad()
 
         # train kr_net model
         if epoch < EPOCHS - 1:
-            train_kr_net(kr_net_model, criterion, opt_kr_net, step_schedule_kr_net, reference_distribution,
-                         S_domain, out_res_domain, p_before, 5, 1500, epoch)
-            opt_kr_net.state = collections.defaultdict(dict)
+            kr_net_model.train()
+            train_kr_net(kr_net_model, criterion_kr_net, opt_kr_net, step_schedule_kr_net, reference_distribution,
+                         loss_kr_net, S_domain, out_res_domain, p_before, 5, 1000, epoch)
+            # opt_kr_net.state = collections.defaultdict(dict)
 
-        # resample
-        # kr_net sample
-        # z = reference_distribution.sample((NUM_DOMAIN / 2, 2)).cuda()
+        # kr_net resample
+        kr_net_model.eval()
         z = reference_distribution.sample((NUM_DOMAIN, 2)).cuda()
         S_domain_kr, _, _ = kr_net_model(z, reverse=True)
-        S_domain_kr = S_domain_kr.detach()
+        S_domain_pos = torch.ones_like(S_domain_kr, device=S_domain_kr.device)
+        S_domain_neg = -torch.ones_like(S_domain_kr, device=S_domain_kr.device)
+        S_domain_kr = torch.where((S_domain_kr > 1), S_domain_pos, S_domain_kr)
+        S_domain_kr = torch.where((S_domain_kr < -1), S_domain_neg, S_domain_kr)
 
+        plt.figure(figsize=(10, 10))
         plt.scatter(S_domain_kr[:, 0:1].clone().reshape(-1).cpu().detach().numpy(),
                     S_domain_kr[:, 1:2].clone().reshape(-1).cpu().detach().numpy(),
                     s=1)
-        plt.show()
+        plt.xlim(-1.0, 1.0)
+        plt.ylim(-1.0, 1.0)
+        # plt.show()
+        # aas
+        plt_path = f'./plots/aas_5000dom_1250bou/samples'
+        plt.savefig(plt_path + f'/aas_samples_{epoch}_500.png')
+        # das
+        # plt_path = f'./plots/das_5000dom_1250bou/samples'
+        # plt.savefig(plt_path + f'/das_samples_{epoch}_500.png')
+        plt.cla()
 
-        # uniform sample
-        # S_domain_uniform = (torch.rand(size=(NUM_DOMAIN / 2, 2)) * 1.9 - 0.95).cuda()
-        S_domain_uniform = (torch.rand(size=(NUM_DOMAIN / 2, 2)) * 2 - 1).cuda()
-
-        x = torch.cat([S_domain_kr[:, 0:1], S_domain_uniform[:, 0:1]], dim=0).requires_grad_()
-        y = torch.cat([S_domain_kr[:, 1:2], S_domain_uniform[:, 1:2]], dim=0).requires_grad_()
-        # x = S_domain_kr[:, 0:1].requires_grad_()
-        # y = S_domain_kr[:, 1:2].requires_grad_()
-
-        S_domain = torch.cat([x, y], dim=1)
+        S_domain = S_domain_kr.detach().requires_grad_()
         S_boundary = torch.cat([torch.cat([torch.ones(NUM_BOUNDARY, 1), torch.rand(NUM_BOUNDARY, 1) * 2 - 1], 1),
                                 torch.cat([-torch.ones(NUM_BOUNDARY, 1), torch.rand(NUM_BOUNDARY, 1) * 2 - 1], 1),
                                 torch.cat([torch.rand(NUM_BOUNDARY, 1) * 2 - 1, torch.ones(NUM_BOUNDARY, 1)], 1),
                                 torch.cat([torch.rand(NUM_BOUNDARY, 1) * 2 - 1, -torch.ones(NUM_BOUNDARY, 1)], 1)])
         S_boundary = S_boundary.to(device)
+
+    # save loss history
+    loss_pinn_domain = torch.tensor(loss_pinn["domain"])
+    loss_pinn_boundary = torch.tensor(loss_pinn["boundary"])
+    loss_pinn_total = torch.tensor(loss_pinn["total"])
+    loss_kr = torch.tensor(loss_kr_net["total"])
+    torch.save(loss_pinn_domain, os.path.join('./saved_models/', f'loss_pinn_domain.pt'))
+    torch.save(loss_pinn_boundary, os.path.join('./saved_models/', f'loss_pinn_boundary.pt'))
+    torch.save(loss_pinn_total, os.path.join('./saved_models/', f'loss_pinn_total.pt'))
+    torch.save(loss_kr, os.path.join('./saved_models/', f'loss_kr.pt'))

@@ -15,7 +15,7 @@ class KR_net(nn.Module):
         self.lb = lb
         self.hb = hb
 
-        delta = 0.0
+        # delta = 0.0
 
         self.bounded_support_mapping = BoundedSupportMapping(input_dim, lb, hb, delta, s)
         self.flows = _KR_net(0, num_scales, num_cf, input_dim)
@@ -31,7 +31,7 @@ class KR_net(nn.Module):
             if self.useBoundedSupportMapping:
                 if x.min() < self.lb or x.max() > self.hb:
                     pass
-                #     raise ValueError(f'Expected x in [{self.lb}， {self.hb}], got x with min/max {x.min()}/{x.max()}')
+                    # raise ValueError(f'Expected x in [{self.lb}， {self.hb}], got x with min/max {x.min()}/{x.max()}')
             pdj = torch.ones([x.shape[0], 1], device=x.device, dtype=x.dtype)
             sldj = torch.zeros([x.shape[0], 1], device=x.device, dtype=x.dtype)
             if self.useBoundedSupportMapping:
