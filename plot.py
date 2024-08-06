@@ -110,14 +110,17 @@ def plot_samples(kr_net_model, reference_distribution,
 
 if __name__ == '__main__':
     # losd model
-    model = PINN_FCN(2, 1)
+    # model = PINN_FCN(2, 1)
+    model = PINN_FCN(2, 1,"sin")
     # kr_model = KR_net()
     # distribution = NormalDistribution()
 
     # plot temp
     load_model_epoch = 49
-    load_model_iter = 1500
+    load_model_iter = 500
     model.load_state_dict(torch.load(f'./saved_models/pinn_{load_model_epoch}_{load_model_iter}.pt'))
+    # model.load_state_dict(torch.load(f'./saved_models/uni_5000dom_1250bou/pinn/pinn_{load_model_epoch}_{load_model_iter}.pt'))
+    # model.load_state_dict(torch.load(f'./saved_models/aas_5000dom_1250bou/pinn/pinn_{load_model_epoch}_{load_model_iter}.pt'))
     plot(model, f"temp", load_model_epoch, load_model_iter, False)
 
     # plot pinn error
