@@ -38,7 +38,7 @@ def train_pinn(model, criterion, optimizer, step_schedule, bvp,
                   f"loss: {loss} loss_domain: {loss_domain} loss_boundary: {loss_boundary}")
 
         if (iter + 1) % iterations == 0:
-            save_path = os.path.join('./saved_models/', f'pinn_{epoch}_{iter + 1}.pt')
+            save_path = os.path.join('../../saved_models/', f'pinn_{epoch}_{iter + 1}.pt')
             torch.save(model.state_dict(), save_path)
 
 
@@ -94,6 +94,6 @@ if __name__ == '__main__':
     loss_pinn_domain = torch.tensor(loss_pinn["domain"])
     loss_pinn_boundary = torch.tensor(loss_pinn["boundary"])
     loss_pinn_total = torch.tensor(loss_pinn["total"])
-    torch.save(loss_pinn_domain, os.path.join('./saved_models/', f'loss_pinn_domain.pt'))
-    torch.save(loss_pinn_boundary, os.path.join('./saved_models/', f'loss_pinn_boundary.pt'))
-    torch.save(loss_pinn_total, os.path.join('./saved_models/', f'loss_pinn_total.pt'))
+    torch.save(loss_pinn_domain, os.path.join('../../saved_models/', f'loss_pinn_domain.pt'))
+    torch.save(loss_pinn_boundary, os.path.join('../../saved_models/', f'loss_pinn_boundary.pt'))
+    torch.save(loss_pinn_total, os.path.join('../../saved_models/', f'loss_pinn_total.pt'))

@@ -28,17 +28,13 @@ def train_pinn(model, criterion, optimizer, step_schedule, bvp,
         if (iter + 1) == iterations:
             out_res_domain = res_domain.clone().detach()
 
-        # aas
         loss_domain = criterion(res_domain, torch.zeros_like(res_domain, device=res_domain.device), 1)
-        # das
-        # loss_domain = criterion(res_domain, torch.zeros_like(res_domain, device=res_domain.device), w)
-
         loss_boundary = criterion(res_boundary, torch.zeros_like(res_boundary, device=res_boundary.device), 1)
         loss = loss_domain + 100.0 * loss_boundary
 
-        with torch.autograd.detect_anomaly():
-            loss.backward()
-        # loss.backward()
+        # with torch.autograd.detect_anomaly():
+        #     loss.backward()
+        loss.backward()
         optimizer.step()
         step_schedule.step()
         model.zero_grad()
@@ -55,7 +51,7 @@ def train_pinn(model, criterion, optimizer, step_schedule, bvp,
                   f"loss: {loss} loss_domain: {loss_domain} loss_boundary: {loss_boundary}")
 
         if (iter + 1) % iterations == 0:
-            save_path = os.path.join('./saved_models/', f'pinn_{epoch}_{iter + 1}.pt')
+            save_path = os.path.join('../../saved_models/', f'pinn_{epoch}_{iter + 1}.pt')
             torch.save(model.state_dict(), save_path)
 
     return out_res_domain
@@ -86,14 +82,8 @@ def train_kr_net(model, criterion, optimizer, step_schedule, distribution,
         p = distribution.prob(y) * pdj
         log_p = distribution.log_prob(y) + sldj
 
-        # aas loss function
         grad_p_norm = (gradient(p, S_domain) ** 2).sum(dim=1, keepdims=True)
         loss = - p * (out_res_domain ** 2) * w + beta * grad_p_norm * w
-        # das loss function
-        # loss = - log_p * (out_res_domain ** 2) * w
-        # aas + das loss function
-        # grad_p_norm = (gradient(p, S_domain) ** 2).sum(dim=1, keepdims=True)
-        # loss = - log_p * (out_res_domain ** 2) * w + beta * grad_p_norm * w
         loss = loss.mean()
 
         loss.backward()
@@ -108,7 +98,7 @@ def train_kr_net(model, criterion, optimizer, step_schedule, distribution,
             print(f"kr net epoch: {epoch} iter: {iter} loss:{loss}")
 
         if (iter + 1) % iterations == 0:
-            save_path = os.path.join('./saved_models/', f'kr_net_{epoch}_{iter + 1}.pt')
+            save_path = os.path.join('../../saved_models/', f'kr_net_{epoch}_{iter + 1}.pt')
             torch.save(model.state_dict(), save_path)
 
 
@@ -200,12 +190,8 @@ if __name__ == '__main__':
         plt.xlim(-1.0, 1.0)
         plt.ylim(-1.0, 1.0)
         # plt.show()
-        # aas
-        plt_path = f'./plots/aas_5000dom_1250bou/samples'
+        plt_path = f'../../plots/aas_5000dom_1250bou/samples'
         plt.savefig(plt_path + f'/aas_samples_{epoch}_500.png')
-        # das
-        # plt_path = f'./plots/das_5000dom_1250bou/samples'
-        # plt.savefig(plt_path + f'/das_samples_{epoch}_500.png')
         plt.cla()
 
         S_domain = S_domain_kr.detach().requires_grad_()
@@ -220,7 +206,7 @@ if __name__ == '__main__':
     loss_pinn_boundary = torch.tensor(loss_pinn["boundary"])
     loss_pinn_total = torch.tensor(loss_pinn["total"])
     loss_kr = torch.tensor(loss_kr_net["total"])
-    torch.save(loss_pinn_domain, os.path.join('./saved_models/', f'loss_pinn_domain.pt'))
-    torch.save(loss_pinn_boundary, os.path.join('./saved_models/', f'loss_pinn_boundary.pt'))
-    torch.save(loss_pinn_total, os.path.join('./saved_models/', f'loss_pinn_total.pt'))
-    torch.save(loss_kr, os.path.join('./saved_models/', f'loss_kr.pt'))
+    torch.save(loss_pinn_domain, os.path.join('../../saved_models/', f'loss_pinn_domain.pt'))
+    torch.save(loss_pinn_boundary, os.path.join('../../saved_models/', f'loss_pinn_boundary.pt'))
+    torch.save(loss_pinn_total, os.path.join('../../saved_models/', f'loss_pinn_total.pt'))
+    torch.save(loss_kr, os.path.join('../../saved_models/', f'loss_kr.pt'))
